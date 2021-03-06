@@ -1,0 +1,5 @@
+digraph "CFG for 'main' function" {
+	label="CFG for 'main' function";
+
+	Node0x1d83e20 [shape=record,color="#b70d28ff", style=filled, fillcolor="#b70d2870",label="{entry:\l  %retval = alloca i32, align 4\l  %argc.addr = alloca i32, align 4\l  %argv.addr = alloca i8**, align 8\l  store i32 0, i32* %retval, align 4\l  store i32 %argc, i32* %argc.addr, align 4\l  store i8** %argv, i8*** %argv.addr, align 8\l  call void @test()\l  ret i32 0\l}"];
+}
