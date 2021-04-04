@@ -1,6 +1,8 @@
 # LLVM-Data-Flow
 
 #### How to run
+
+Run the following commands at dir /Pass/build
 ```
 cmake -DCMAKE_BUILD_TYPE=Release ../Transforms/LivenessAnalysis
 ```
