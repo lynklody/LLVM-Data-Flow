@@ -41,7 +41,7 @@ struct LivenessAnalysis : public FunctionPass {
         {
             // Binary opreation: x <- y + z
             if (inst.isBinaryOp()) {
-                auto* v = dyn_cast<User>(&inst);
+                Value* v = dyn_cast<Value>(&inst);
                 int vn = vnums[v];
                 vector<Value*> vec = vnlist[vn]; // signiture variable = first element in vnlist Value* vector
                 Value* sigvar = vec.at(0);
@@ -49,7 +49,9 @@ struct LivenessAnalysis : public FunctionPass {
                     set.push_back(sigvar);
             }
             else if (inst.getOpcode() == Instruction::Store) {
-                Value* v2 = inst.getOperand(1);
+                Value* v2;
+                if (inst.getNumOperands() == 2)
+                    v2 = inst.getOperand(1);
                 if (!findInVec(set, v2))
                     set.push_back(v2);
             }
@@ -59,23 +61,31 @@ struct LivenessAnalysis : public FunctionPass {
     void findUEVar(BasicBlock &bb, vector<Value*> &set, vector<Value*> &varKill) {
         for (auto& inst : bb)
         {
-            if (inst.getOpcode() == Instruction::Alloca || inst.getOpcode() == Instruction::Ret)
+            if (inst.getOpcode() == Instruction::Alloca 
+                || inst.getOpcode() == Instruction::Ret)
                 continue;
-            auto* ptr = dyn_cast<User>(&inst);
-            Value* v1 = inst.getOperand(0);
-            Value* v2 = inst.getOperand(1);
-            if (vnums[v1] && !findInVec(varKill, v1)) {
-                set.push_back(v1);
+            Value* ptr = dyn_cast<Value>(&inst);
+            Value* v1;
+            Value* v2;
+            
+            if (inst.getNumOperands() >= 1) {
+                v1 = inst.getOperand(0);
+                if (vnums[v1] && !findInVec(varKill, v1)) {
+                    set.push_back(v1);
+                }
             }
-            if (vnums[v2] && !findInVec(varKill, v2)) {
-                set.push_back(v2);
+            if (inst.getNumOperands() == 2) {
+                v2 = inst.getOperand(1);
+                if (vnums[v2] && !findInVec(varKill, v2)) {
+                    set.push_back(v2);
+                }
             }
         }
     }
 
     bool findLiveOut(BasicBlock* bb, vector<Value*>* set) {
         vector<Value*>* live;
-        auto it = liveOutMap.find(bb);
+        map<BasicBlock*, vector<Value*>*>::iterator it = liveOutMap.find(bb);
         if (it != liveOutMap.end()) {
             live = it->second;
         } else {
@@ -91,36 +101,28 @@ struct LivenessAnalysis : public FunctionPass {
                 vector<Value*>* liveOut;
                 map<BasicBlock*, vector<Value*>*>::iterator it;
                 
-                try{
-                    it = varKillMap.find(succ);
-                    if (it != varKillMap.end()) {
-                        varKill = it->second;
-                    }
-                    errs() << "------varkill:";
-                    it = UEVarMap.find(succ);
-                    if (it != UEVarMap.end()) {
-                        UEVar = it->second;
-                    }
-                    errs() << "------varkill:";
-                    it = liveOutMap.find(succ);
-                    if (it != liveOutMap.end()) {
-                        liveOut = it->second;
-                        setDiff(*liveOut, *varKill, *liveIn);
-                    }
-                    errs() << "------varkill:";
+                it = varKillMap.find(succ);
+                if (it != varKillMap.end())
+                    varKill = it->second;
+                it = UEVarMap.find(succ);
+                if (it != UEVarMap.end())
+                    UEVar = it->second;
+                it = liveOutMap.find(succ);
+                if (it != liveOutMap.end()) {
+                    liveOut = it->second;
+                    setDiff(*liveOut, *varKill, *liveIn);
                 }
-                catch (const bad_alloc&) {
-                    return false;
-                }
-                errs() << "------varkill:";
-                printVec(*varKill);
-                setUnion(*liveIn, *UEVar, *liveIn);
-                errs() << "------liveIn:";
-                printVec(*liveIn);
+                errs() << "------varkill:\n";
+                // printVec(*liveIn);
+                vector<Value*> liveIn_after;
+                // set_union(liveIn->begin(), liveIn->end(), UEVar->begin(), UEVar->end(),back_inserter(liveIn_after));
+                setUnion(*liveIn, *UEVar, liveIn_after);
+                errs() << "------liveIn:\n";
+                // printVec(*liveIn);
                 // set_union(liveIn->begin(), liveIn->end(), UEVar->begin(), UEVar->end(), back_inserter(liveIn));
-                setUnion(*liveIn, *temp, *liveOut);
-                errs() << "------liveOut:";
-                printVec(*liveOut);
+                setUnion(liveIn_after, *temp, *liveOut);
+                errs() << "------liveOut:\n";
+                // printVec(*liveOut);
                 // set_union(set.begin(), set.end(), temp->begin(), temp->end(), back_inserter(set));
                 temp = liveOut;
             // }
@@ -129,9 +131,9 @@ struct LivenessAnalysis : public FunctionPass {
         if (liveOutMap.size() != live->size() || it == liveOutMap.end()) {
             changed = true;
         } else {
-            vector<Value*>::iterator it;
-            for (it = live->begin(); it != live->end(); it++) {
-                if (find(temp->begin(), temp->end(), *it) == temp->end()) {
+            vector<Value*>::iterator i;
+            for (i = live->begin(); i != live->end(); i++) {
+                if (find(temp->begin(), temp->end(), *i) == temp->end()) {
                     changed = true;
                     break;
                 }
@@ -141,10 +143,7 @@ struct LivenessAnalysis : public FunctionPass {
             if (it != liveOutMap.end()) {
                 it->second = temp;
             } else {
-                auto tmp = new pair<BasicBlock*, vector<Value*>*>;
-                tmp->first = bb;
-                tmp->second = temp;
-                this->liveOutMap.insert(*tmp);
+                liveOutMap.insert(make_pair(bb, temp));
             }
         }
         return changed;
@@ -157,9 +156,15 @@ struct LivenessAnalysis : public FunctionPass {
                 continue;
             // errs() << inst << "\n";
 
-            auto* ptr = dyn_cast<User>(&inst);
-            Value* v1 = inst.getOperand(0);
-            Value* v2 = inst.getOperand(1);
+            Value* ptr;
+            if (&inst)
+                ptr = dyn_cast<Value>(&inst);
+            Value* v1;
+            Value* v2;
+            if (inst.getNumOperands() >= 1) 
+                v1 = inst.getOperand(0);
+            if (inst.getNumOperands() == 2)
+                v2 = inst.getOperand(1);
             stringstream ssptr, ss1, ss2;
             ssptr << ptr;
             ss1 << v1;
@@ -177,7 +182,7 @@ struct LivenessAnalysis : public FunctionPass {
                     if (!findInVec(vnlist[num], ptr))
                         vnlist[num].push_back(ptr);
                 }
-                auto* vptr = dyn_cast<Value>(&inst);
+                Value* vptr = dyn_cast<Value>(&inst);
                 allocatedVar.push_back(vptr);
             }
             else if (inst.getOpcode() == Instruction::Load) {
@@ -273,7 +278,7 @@ struct LivenessAnalysis : public FunctionPass {
         }
     }
 
-    bool allocated(auto &v) {
+    bool allocated(Value* v) {
         auto it = find(allocatedVar.begin(), allocatedVar.end(), v);
         if (it != allocatedVar.end()) {
             return true;
@@ -281,34 +286,89 @@ struct LivenessAnalysis : public FunctionPass {
         return false;
     }
 
-    void printVec(auto &v) {
-        for (auto it: v) {
-            if (allocated(it)) {
-                errs() << it->getName() << " ";
+    void printVec(vector<Value*> vec) {
+        // for (vector<Value*>::iterator it: v) {
+        for (Value* v: vec) {
+            if (allocated(v)) {
+                errs() << v->getName() << " ";
             }
         }
         errs() << "\n";
     }
 
-    void setDiff(vector<Value*> &s1, vector<Value*> &s2, vector<Value*> s3){
-        for (auto it=s1.begin(); it!=s1.end(); it++){
-            auto i = find(s2.begin(), s2.end(), *it);
+    // void printVec(const vector<Value*>* v) {
+    //     // for (Value* v: vec) {
+    //     //     if (allocated(v)) {
+    //     //         errs() << v->getName() << " ";
+    //     //     }
+    //     // }
+    //     for (auto (*it): (*v)) {
+    //         if (allocated((*it))) {
+    //             errs() << it->getName() << " ";
+    //         }
+    //     }
+    //     errs() << "\n";
+    // }
+
+    void setDiff(vector<Value*> &s1, vector<Value*> &s2, vector<Value*> &s3){
+        for (vector<Value*>::iterator it=s1.begin(); it!=s1.end(); it++){
+            auto i = find(s2.begin(), s2.end(), (*it));
             if(i == s2.end()){
-                s3.push_back(*it);
-                // s3.insert(s3.end(),*it);
+                s3.insert(s3.end(), (*it));
                 errs() <<"\n inserted s3\n";
             }
         }
     }
 
-    void setUnion(vector<Value*> &s1, vector<Value*> &s2, vector<Value*> s3){
-        s3 = s1;
-        for (auto it = s2.begin(); it != s2.end(); it++){
-            if(find(s1.begin(),s1.end(),*it) == s1.end()){
-                s3.insert(s3.end(),*it);
+    // void setDiff(vector<Value*>* s1, vector<Value*>* s2, vector<Value*>* s3){
+    //     for (auto it=s1->begin(); it!=s1->end(); it++){
+    //         auto i = find(s2->begin(), s2->end(), (*it));
+    //         if(i == s2->end()){
+    //             // s3->push_back(*it);
+    //             s3->insert(s3->end(), (*it));
+    //             errs() <<"\n inserted s3\n";
+    //         }
+    //     }
+    // }
+
+    void setUnion(vector<Value*> &s1, vector<Value*> &s2, vector<Value*> &s3){
+        errs() << " EMPTY " << s1.empty();
+        if (s1.empty() || s2.empty()) {
+            return;
+        }
+        // s3 = s1;
+        for (Value* v : s1) {
+            s3.push_back(v);
+        }
+        // for (auto it = s2.begin(); it != s2.end(); it++) {
+            // errs() << (*it)->getName() << " ";
+        // }
+        errs() << "\n";
+        // errs() <<"IN SET UNION2\n";
+        for (Value* v : s2) {
+        // for (vector<Value*>::iterator it = s2.begin(); it != s2.end(); it++){
+            // errs() <<"IN SET UNION3\n";
+            // errs() << " it=" << v->getName() << "\n";
+            // vector<Value*>::iterator i = find(s1.begin(), s1.end(), it);
+            if (find(s1.begin(), s1.end(), v) == s1.end()) {
+                s3.push_back(v);
+                // errs() <<"IN SET UNION4\n";
+                // s3->insert(s3->end(), (*it));
             }
         }
     }
+
+    // void setUnion(vector<Value*>* s1, vector<Value*>* s2, vector<Value*>* s3){
+    //     s3 = s1;
+    //     for (vector<Value*>*::iterator it = s2->begin(); it != s2->end(); it++){
+    //         errs() <<"IN SET UNION3\n";
+    //         if(find(s1->begin(),s1->end(), (*it)) == s1->end()){
+    //             s3->push_back(*it);
+    //             errs() <<"IN SET UNION4\n";
+    //             // s3->insert(s3->end(), (*it));
+    //         }
+    //     }
+    // }
 
     //------------------------------------------------------------------------------
 
@@ -317,11 +377,6 @@ struct LivenessAnalysis : public FunctionPass {
         if (F.getName() != func_name) return false;
 
         // --------INITIALIZATION-----------
-        // for (auto& basic_block : F) {
-        //     vector<Value*> empty_set;
-        //     liveOutMap.insert(make_pair(&basic_block, &empty_set));
-        //     liveInMap.insert(make_pair(&basic_block, &empty_set));
-        // }
         vector<Value*> varKill;
         vector<Value*> UEVar;
         vector<Value*> liveOut;
@@ -338,21 +393,25 @@ struct LivenessAnalysis : public FunctionPass {
 
             findUEVar(basic_block, UEVar, varKill);
             UEVarMap.insert(make_pair(&basic_block, &UEVar));
-        // }
 
             errs() << "VARKILL: ";
             printVec(varKill);
             errs() << "UEVAR: ";
             printVec(UEVar);
             
-        // for (auto& basic_block : F) {
             bool changed =  true;
             while (changed) {
                 changed = false;
                 changed = findLiveOut(&basic_block, &liveOut);
+                errs() << "\nCHANGED=" << changed;
             }
             // liveOutMap.insert(make_pair(&basic_block, &liveOut));
 
+            errs() << "LIVEOUT: ";
+            printVec(liveOut);
+            varKill.clear();
+            UEVar.clear();
+            liveOut.clear();
             // // if (liveOut.size() > 0) {
             //     vector<Value*> temp;
             //     // sort(liveOut.begin(), liveOut.end(), comparator());
@@ -372,14 +431,6 @@ struct LivenessAnalysis : public FunctionPass {
             // // }
             
         // }
-
-        // for (auto& basic_block : F) {
-
-            errs() << "LIVEOUT: ";
-            printVec(liveOut);
-            varKill.clear();
-            UEVar.clear();
-            liveOut.clear();
         }
     } // end runOnFunction
 }; // end of struct
